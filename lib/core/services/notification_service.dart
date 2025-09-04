@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:timezone/timezone.dart' as tz;
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -312,64 +311,5 @@ class NotificationService {
     }
   }
 
-  /// Get pending notifications
-  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
-    try {
-      return await _notifications.pendingNotificationRequests();
-    } catch (e) {
-      debugPrint('Failed to get pending notifications: $e');
-      return [];
-    }
-  }
 
-  /// Schedule a notification (for future use)
-  Future<void> scheduleNotification({
-    required int id,
-    required String title,
-    required String body,
-    required DateTime scheduledDate,
-    String? payload,
-  }) async {
-    if (!_isInitialized) {
-      await initialize();
-    }
-
-    try {
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'scheduled_messages',
-        'Scheduled Messages',
-        channelDescription: 'Scheduled message notifications',
-        importance: Importance.high,
-        priority: Priority.high,
-      );
-
-      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-      );
-
-      const NotificationDetails details = NotificationDetails(
-        android: androidDetails,
-        iOS: iosDetails,
-      );
-
-      // Convert DateTime to TZDateTime
-      final tz.TZDateTime tzScheduledDate = tz.TZDateTime.from(scheduledDate, tz.local);
-
-      await _notifications.zonedSchedule(
-        id,
-        title,
-        body,
-        tzScheduledDate,
-        details,
-        payload: payload,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-      );
-
-      debugPrint('Notification scheduled for $scheduledDate');
-    } catch (e) {
-      debugPrint('Failed to schedule notification: $e');
-    }
-  }
 }

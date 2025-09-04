@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:io';
-import 'package:flutter/services.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/socket_service.dart';
 import '../../../core/services/notification_service.dart';
@@ -372,10 +370,25 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> retryConnection() async {
     try {
       final token = await StorageService.getAuthToken();
-      await connectSocket(token);
+      if (token != null) {
+        await connectSocket(token);
+      } else {
+        debugPrint('[ChatController] No auth token available for retry');
+      }
     } catch (e) {
       debugPrint('[ChatController] Retry connection failed: $e');
     }
+  }
+
+  // Ensure socket connection is active
+  Future<void> ensureSocketConnection() async {
+    await _socketService.ensureConnection();
+  }
+
+  // Force connection status refresh
+  void refreshConnectionStatus() {
+    _socketService.refreshConnectionStatus();
+    notifyListeners(); // This will trigger a rebuild of Consumer widgets
   }
 
   // App lifecycle management

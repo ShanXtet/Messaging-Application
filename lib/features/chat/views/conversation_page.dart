@@ -65,9 +65,9 @@ class _ConversationPageState extends State<ConversationPage> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    // Leave the conversation room before disconnecting
+    // Leave the conversation room but keep socket connection alive
     _socketService.leaveRoom(widget.conversationId);
-    _socketService.disconnect();
+    // Don't disconnect socket when leaving conversation - keep it connected
     super.dispose();
   }
 

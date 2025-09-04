@@ -48,7 +48,7 @@ const upload = multer({
 app.use('/uploads', express.static('uploads'));
 
 const PORT = process.env.PORT || 4000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/MessageApp';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/MessageApp';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_change_me';
 
 // --- DB ---
@@ -255,6 +255,18 @@ const validateUserExists = async (userId) => {
 };
 
 // --- REST routes ---
+app.get('/', (_req, res) => res.json({ 
+  message: 'Message App API Server', 
+  version: '1.0.0',
+  status: 'running',
+  endpoints: {
+    health: '/health',
+    auth: '/api/login, /api/register, /api/me',
+    chat: '/api/threads, /api/messages, /api/conversations',
+    users: '/api/users, /api/users/search'
+  }
+}));
+
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.post('/api/register', async (req, res) => {
@@ -831,37 +843,6 @@ app.get('/api/users/:userId/status', auth, (req, res) => {
   });
 });
 
-// Debug endpoint to check token and user validation
-app.get('/api/debug/token', authWithUserValidation, async (req, res) => {
-  try {
-    const tokenUser = req.user;
-    const dbUser = req.userData;
-    
-    res.json({
-      token: {
-        sub: tokenUser.sub,
-        email: tokenUser.email,
-        name: tokenUser.name,
-        iat: tokenUser.iat,
-        exp: tokenUser.exp
-      },
-      database: {
-        id: String(dbUser._id),
-        email: dbUser.email,
-        name: dbUser.name
-      },
-      match: {
-        idMatch: tokenUser.sub === String(dbUser._id),
-        emailMatch: tokenUser.email === dbUser.email,
-        nameMatch: tokenUser.name === dbUser.name
-      },
-      connectedUsers: getConnectedUsers().filter(u => u.userId === String(dbUser._id))
-    });
-  } catch (e) {
-    console.error('[debug:token] error:', e);
-    res.status(500).json({ error: 'Debug check failed' });
-  }
-});
 
 // Create a new conversation between two users
 app.post('/api/conversations', authWithUserValidation, async (req, res) => {
@@ -907,136 +888,7 @@ app.post('/api/conversations', authWithUserValidation, async (req, res) => {
   }
 });
 
-// Check database status endpoint
-app.get('/api/admin/status', authWithUserValidation, async (req, res) => {
-  try {
-    console.log('[admin] Database status requested by:', req.userData.name);
-    
-    // Get all users
-    const allUsers = await User.find({}).select('_id name email createdAt').lean();
-    
-    // Get all conversations
-    const allConversations = await Conversation.find({}).lean();
-    
-    // Check for problematic conversations
-    const problematicConversations = [];
-    for (const conv of allConversations) {
-      const validParticipants = [];
-      const invalidParticipants = [];
-      
-      for (const participantId of conv.participants) {
-        const user = await User.findById(participantId);
-        if (user) {
-          validParticipants.push({
-            id: String(participantId),
-            name: user.name,
-            email: user.email
-          });
-        } else {
-          invalidParticipants.push(String(participantId));
-        }
-      }
-      
-      if (invalidParticipants.length > 0 || validParticipants.length < 2) {
-        problematicConversations.push({
-          conversationId: String(conv._id),
-          validParticipants,
-          invalidParticipants,
-          lastMessage: conv.lastMessage,
-          createdAt: conv.createdAt
-        });
-      }
-    }
-    
-    // Get message count
-    const messageCount = await Message.countDocuments();
-    
-    res.json({
-      users: {
-        total: allUsers.length,
-        list: allUsers.map(u => ({
-          id: String(u._id),
-          name: u.name,
-          email: u.email,
-          createdAt: u.createdAt
-        }))
-      },
-      conversations: {
-        total: allConversations.length,
-        problematic: problematicConversations.length,
-        problematicList: problematicConversations
-      },
-      messages: {
-        total: messageCount
-      }
-    });
-  } catch (e) {
-    console.error('[admin] Status check error:', e);
-    res.status(500).json({ error: 'Status check failed' });
-  }
-});
 
-// Database cleanup endpoint (for development/testing)
-app.post('/api/admin/cleanup', authWithUserValidation, async (req, res) => {
-  try {
-    // Only allow cleanup if user is admin (you can add admin check here)
-    console.log('[admin] Database cleanup requested by:', req.userData.name);
-    
-    // Clean up orphaned conversations (conversations with non-existent users)
-    const allConversations = await Conversation.find({}).lean();
-    let cleanedConversations = 0;
-    
-    for (const conv of allConversations) {
-      const validParticipants = [];
-      for (const participantId of conv.participants) {
-        const user = await User.findById(participantId);
-        if (user) {
-          validParticipants.push(participantId);
-        }
-      }
-      
-      if (validParticipants.length !== conv.participants.length) {
-        if (validParticipants.length < 2) {
-          // Delete conversation if less than 2 valid participants
-          await Conversation.findByIdAndDelete(conv._id);
-          await Message.deleteMany({ conversationId: conv._id });
-          cleanedConversations++;
-        } else {
-          // Update conversation with valid participants only
-          await Conversation.findByIdAndUpdate(conv._id, { participants: validParticipants });
-        }
-      }
-    }
-    
-    // Clean up orphaned messages
-    const orphanedMessages = await Message.find({
-      $or: [
-        { conversationId: { $exists: false } },
-        { from: { $exists: false } },
-        { to: { $exists: false } }
-      ]
-    });
-    
-    if (orphanedMessages.length > 0) {
-      await Message.deleteMany({
-        $or: [
-          { conversationId: { $exists: false } },
-          { from: { $exists: false } },
-          { to: { $exists: false } }
-        ]
-      });
-    }
-    
-    res.json({ 
-      message: 'Database cleanup completed',
-      cleanedConversations,
-      orphanedMessages: orphanedMessages.length
-    });
-  } catch (e) {
-    console.error('[admin] Cleanup error:', e);
-    res.status(500).json({ error: 'Cleanup failed' });
-  }
-});
 
 // Add endpoint to get conversation details
 app.get('/api/conversations/:conversationId', auth, async (req, res) => {
@@ -1210,7 +1062,8 @@ app.use((err, req, res, next) => {
 
 // --- start ---
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[api] http & ws on http://0.0.0.0:${PORT}`);
+  console.log(`[api] http & ws on http://localhost:${PORT}`);
+  console.log(`[api] also accessible from Android emulator at http://10.0.2.2:${PORT}`);
   console.log(`[socket] Socket.IO server ready for real-time messaging`);
 });
 

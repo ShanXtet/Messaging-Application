@@ -15,7 +15,6 @@ class ConnectionStatusWidget extends StatelessWidget {
         final isConnecting = status['isConnecting'] as bool;
         final attempts = status['connectionAttempts'] as int;
         final maxAttempts = status['maxAttempts'] as int;
-        final serverUrl = status['serverUrl'] as String;
 
         if (isConnected) {
           return Container(
@@ -173,7 +172,11 @@ class ConnectionStatusBanner extends StatelessWidget {
               ),
               if (!isConnecting)
                 TextButton(
-                  onPressed: () => chatController.retryConnection(),
+                  onPressed: () async {
+                    await chatController.retryConnection();
+                    // Force a rebuild to update the connection status
+                    chatController.refreshConnectionStatus();
+                  },
                   child: Text(
                     'Retry',
                     style: TextStyle(

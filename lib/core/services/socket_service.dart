@@ -275,7 +275,22 @@ class SocketService {
       'connectionAttempts': _connectionAttempts,
       'maxAttempts': _maxConnectionAttempts,
       'serverUrl': ApiConstants.baseUrl,
+      'shouldAutoReconnect': _shouldAutoReconnect,
     };
+  }
+
+  // Ensure connection is active
+  Future<void> ensureConnection() async {
+    if (!_isConnected && !_isConnecting) {
+      debugPrint('[SocketService] Ensuring connection...');
+      await connect();
+    }
+  }
+
+  // Force connection status refresh
+  void refreshConnectionStatus() {
+    // This will trigger a rebuild of any widgets listening to connection status
+    debugPrint('[SocketService] Connection status: connected=$_isConnected, connecting=$_isConnecting, autoReconnect=$_shouldAutoReconnect');
   }
 
   // Schedule automatic reconnection
@@ -316,6 +331,18 @@ class SocketService {
     _isConnected = false;
     _isConnecting = false;
     _connectionAttempts = 0;
+  }
+
+  // Soft disconnect - keeps auto-reconnect enabled
+  void softDisconnect() {
+    _reconnectTimer?.cancel();
+    _socket?.disconnect();
+    _socket?.dispose();
+    _socket = null;
+    _isConnected = false;
+    _isConnecting = false;
+    _connectionAttempts = 0;
+    // Keep _shouldAutoReconnect = true for automatic reconnection
   }
 
   // Dispose

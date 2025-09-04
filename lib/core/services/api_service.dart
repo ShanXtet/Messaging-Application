@@ -174,14 +174,6 @@ class ApiService {
     return await get('${ApiConstants.conversations}/$conversationId');
   }
 
-  // Admin endpoints
-  Future<Map<String, dynamic>> getDatabaseStatus() async {
-    return await get('/api/admin/status');
-  }
-
-  Future<Map<String, dynamic>> cleanupDatabase() async {
-    return await post('/api/admin/cleanup', {});
-  }
 
   Future<Map<String, dynamic>> getConnectedUsers() async {
     return await get(ApiConstants.connectedUsers);
