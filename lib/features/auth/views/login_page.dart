@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/auth_controller.dart';
+import '../../chat/controllers/chat_controller.dart';
 import '../../../shared/widgets/loading_indicator.dart';
 import 'register_page.dart';
 
@@ -27,12 +28,26 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
 
     final authController = context.read<AuthController>();
+    final chatController = context.read<ChatController>();
+    
     final success = await authController.login(
       _emailController.text,
       _passwordController.text,
     );
 
-    if (!success && mounted) {
+    if (success && mounted) {
+      // Wait a moment for authentication to complete
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Connect socket after successful login
+      final token = await authController.token;
+      if (token != null) {
+        debugPrint('[LoginPage] Connecting socket with token: ${token.substring(0, 20)}...');
+        await chatController.connectSocket(token);
+      } else {
+        debugPrint('[LoginPage] No token available for socket connection');
+      }
+    } else if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(authController.error ?? 'Login failed'),

@@ -42,7 +42,7 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
       debugPrint('[ChatController] No existing conversation found, creating new one...');
       final response = await _apiService.createConversation(userId);
       
-      if (response != null && response['conversationId'] != null) {
+      if (response['conversationId'] != null) {
         final conversationId = response['conversationId'] as String;
         debugPrint('[ChatController] ✅ Successfully created new conversation: $conversationId');
         
@@ -133,7 +133,7 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
     
     try {
       final response = await _apiService.getThreads();
-      if (response != null && response['threads'] != null) {
+      if (response['threads'] != null) {
         _threads = List<Map<String, dynamic>>.from(response['threads']);
         notifyListeners();
       }
@@ -168,6 +168,13 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  // Ensure continuous connection monitoring
+  void _ensureContinuousConnection() {
+    // This method ensures the socket service maintains continuous connection
+    // The SocketService now handles heartbeat and monitoring automatically
+    debugPrint('[ChatController] Ensuring continuous connection monitoring...');
+  }
+
   // Connect to socket for real-time messaging
   Future<void> connectSocket([String? token]) async {
     try {
@@ -176,6 +183,9 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
       
       // Add app lifecycle observer
       WidgetsBinding.instance.addObserver(this);
+      
+      // Ensure continuous connection monitoring
+      _ensureContinuousConnection();
       
       // Try to connect to socket
       await _socketService.connect(token);
@@ -198,21 +208,24 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
   // Set up socket event listeners for real-time updates
   void _setupSocketListeners() {
     // Listen for new messages
-    _socketService.onMessage((messageData) {
+    _socketService.onMessage((messageData) async {
       debugPrint('[ChatController] Received new message: $messageData');
       
       // Show notification for new messages (only if not from current user)
       _handleNewMessageNotification(messageData);
+      
+      // Refresh threads to update last message and unread counts
+      await getThreads();
       
       // Notify listeners that a new message arrived
       notifyListeners();
     });
 
     // Listen for thread updates
-    _socketService.onThreadUpdate((threadData) {
+    _socketService.onThreadUpdate((threadData) async {
       debugPrint('[ChatController] Thread updated: $threadData');
       // Refresh threads list
-      getThreads();
+      await getThreads();
     });
 
     // Listen for typing indicators
@@ -391,6 +404,17 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners(); // This will trigger a rebuild of Consumer widgets
   }
 
+  // Mark messages as read for a conversation
+  Future<void> markMessagesAsRead(String conversationId) async {
+    try {
+      await _apiService.markMessagesAsRead(conversationId);
+      // Refresh threads to update unread counts
+      await getThreads();
+    } catch (e) {
+      debugPrint('[ChatController] Failed to mark messages as read: $e');
+    }
+  }
+
   // App lifecycle management
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -432,6 +456,9 @@ class ChatController extends ChangeNotifier with WidgetsBindingObserver {
         debugPrint('[ChatController] Failed to reconnect after app resume: $e');
       }
     }
+    
+    // Refresh threads to get latest messages and unread counts
+    await getThreads();
   }
 
   // Handle app paused

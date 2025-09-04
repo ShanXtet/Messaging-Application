@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../constants/api_constants.dart';
 import 'storage_service.dart';
 
@@ -12,12 +13,133 @@ class SocketService {
   static const int _maxConnectionAttempts = 3;
   static const Duration _retryDelay = Duration(seconds: 5);
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
+  Timer? _connectionMonitorTimer;
   bool _shouldAutoReconnect = true;
+  DateTime? _lastHeartbeat;
+  static const Duration _heartbeatInterval = Duration(seconds: 1);
+  static const Duration _connectionCheckInterval = Duration(seconds: 1);
+  static const Duration _heartbeatTimeout = Duration(seconds: 5);
 
   // Getters
   bool get isConnected => _isConnected;
   bool get isConnecting => _isConnecting;
   IO.Socket? get socket => _socket;
+
+  // Start heartbeat system
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (timer) {
+      if (_isConnected && _socket != null) {
+        _sendHeartbeat();
+      }
+    });
+  }
+
+  // Stop heartbeat system
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  // Send heartbeat ping
+  void _sendHeartbeat() {
+    if (_socket != null && _isConnected) {
+      _socket!.emit('ping', {'timestamp': DateTime.now().millisecondsSinceEpoch});
+      _lastHeartbeat = DateTime.now();
+      debugPrint('[SocketService] Heartbeat sent');
+    }
+  }
+
+  // Start connection monitoring
+  void _startConnectionMonitor() {
+    _stopConnectionMonitor();
+    _connectionMonitorTimer = Timer.periodic(_connectionCheckInterval, (timer) {
+      _checkConnectionHealth();
+    });
+  }
+
+  // Stop connection monitoring
+  void _stopConnectionMonitor() {
+    _connectionMonitorTimer?.cancel();
+    _connectionMonitorTimer = null;
+  }
+
+  // Check connection health
+  void _checkConnectionHealth() {
+    if (!_isConnected || _socket == null) {
+      debugPrint('[SocketService] Connection lost, attempting to reconnect...');
+      _attemptReconnection();
+      return;
+    }
+
+    // Check if heartbeat response is overdue
+    if (_lastHeartbeat != null) {
+      final timeSinceLastHeartbeat = DateTime.now().difference(_lastHeartbeat!);
+      if (timeSinceLastHeartbeat > _heartbeatTimeout) {
+        debugPrint('[SocketService] Heartbeat timeout, reconnecting...');
+        _attemptReconnection();
+      }
+    }
+  }
+
+  // Attempt reconnection
+  void _attemptReconnection() {
+    if (!_shouldAutoReconnect || _isConnecting) return;
+    
+    debugPrint('[SocketService] Attempting automatic reconnection...');
+    connect();
+  }
+
+  // Check if backend is reachable
+  Future<bool> _isBackendReachable() async {
+    try {
+      final response = await http.get(Uri.parse('${ApiConstants.baseUrl}/health')).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          throw Exception('Health check timeout');
+        },
+      );
+      debugPrint('[SocketService] Backend health check: ${response.statusCode}');
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[SocketService] Backend health check failed: $e');
+      // Don't fail connection if health check fails, just warn
+      return true; // Allow connection attempt even if health check fails
+    }
+  }
+
+  // Ensure connection without forcing reconnect
+  Future<void> ensureConnection([String? token]) async {
+    if (_isConnected) {
+      debugPrint('[SocketService] Already connected');
+      return;
+    }
+    
+    // If already connecting, wait for it to complete
+    if (_isConnecting) {
+      debugPrint('[SocketService] Already connecting, waiting...');
+      // Wait for connection to complete or fail
+      int attempts = 0;
+      while (_isConnecting && attempts < 30) { // Wait up to 30 seconds
+        await Future.delayed(const Duration(milliseconds: 1000));
+        attempts++;
+      }
+      if (_isConnected) {
+        debugPrint('[SocketService] Connection completed while waiting');
+        return;
+      }
+    }
+    
+    debugPrint('[SocketService] Ensuring connection...');
+    try {
+      await connect(token);
+      debugPrint('[SocketService] Connection ensured successfully');
+    } catch (e) {
+      debugPrint('[SocketService] Failed to ensure connection: $e');
+      rethrow;
+    }
+  }
 
   // Initialize and connect
   Future<void> connect([String? token]) async {
@@ -25,6 +147,13 @@ class SocketService {
 
     _isConnecting = true;
     _connectionAttempts = 0;
+
+    // Check if backend is reachable first
+    final isReachable = await _isBackendReachable();
+    if (!isReachable) {
+      _isConnecting = false;
+      throw Exception('Backend server is not reachable at ${ApiConstants.baseUrl}');
+    }
 
     while (_connectionAttempts < _maxConnectionAttempts && !_isConnected) {
       try {
@@ -49,9 +178,10 @@ class SocketService {
               .setAuth({'token': authToken})
               .setQuery({'token': authToken}) // Fallback for older versions
               .enableReconnection()
-              .setReconnectionAttempts(3)
+              .setReconnectionAttempts(5)
               .setReconnectionDelay(2000)
-              .setTimeout(10000) // Reduced to 10 second timeout
+              .setTimeout(15000) // Increased timeout for better reliability
+              .setReconnectionDelayMax(10000)
               .build(),
         );
 
@@ -60,6 +190,9 @@ class SocketService {
         
         if (_isConnected) {
           debugPrint('[SocketService] Successfully connected on attempt $_connectionAttempts');
+          // Start monitoring systems
+          _startHeartbeat();
+          _startConnectionMonitor();
           break;
         }
       } catch (e) {
@@ -87,12 +220,19 @@ class SocketService {
       _isConnected = true;
       _isConnecting = false;
       _connectionAttempts = 0;
+      // Start monitoring systems when connected
+      _startHeartbeat();
+      _startConnectionMonitor();
     });
 
     _socket?.onDisconnect((reason) {
       debugPrint('[SocketService] Disconnected - Reason: $reason');
       _isConnected = false;
       _isConnecting = false;
+      
+      // Stop monitoring systems
+      _stopHeartbeat();
+      _stopConnectionMonitor();
       
       // Auto-reconnect on disconnect (unless it's a manual disconnect)
       if (reason != 'io client disconnect') {
@@ -124,6 +264,12 @@ class SocketService {
     // Listen for server errors
     _socket?.on('error', (error) {
       debugPrint('[SocketService] Server error: $error');
+    });
+
+    // Listen for pong responses (heartbeat acknowledgment)
+    _socket?.on('pong', (data) {
+      _lastHeartbeat = DateTime.now();
+      debugPrint('[SocketService] Heartbeat acknowledged');
     });
   }
 
@@ -182,6 +328,7 @@ class SocketService {
   // Listen for new messages
   void onMessage(Function(Map<String, dynamic>) callback) {
     _socket?.on(ApiConstants.messageNew, (data) {
+      debugPrint('[SocketService] Received message event: $data');
       callback(Map<String, dynamic>.from(data));
     });
   }
@@ -189,6 +336,7 @@ class SocketService {
   // Listen for thread updates
   void onThreadUpdate(Function(Map<String, dynamic>) callback) {
     _socket?.on(ApiConstants.threadUpdate, (data) {
+      debugPrint('[SocketService] Received thread update event: $data');
       callback(Map<String, dynamic>.from(data));
     });
   }
@@ -279,18 +427,19 @@ class SocketService {
     };
   }
 
-  // Ensure connection is active
-  Future<void> ensureConnection() async {
-    if (!_isConnected && !_isConnecting) {
-      debugPrint('[SocketService] Ensuring connection...');
-      await connect();
-    }
-  }
 
   // Force connection status refresh
   void refreshConnectionStatus() {
     // This will trigger a rebuild of any widgets listening to connection status
     debugPrint('[SocketService] Connection status: connected=$_isConnected, connecting=$_isConnecting, autoReconnect=$_shouldAutoReconnect');
+  }
+
+  // Reset connection state if stuck
+  void resetConnectionState() {
+    debugPrint('[SocketService] Resetting connection state');
+    _isConnecting = false;
+    _isConnected = false;
+    _connectionAttempts = 0;
   }
 
   // Schedule automatic reconnection
@@ -325,6 +474,8 @@ class SocketService {
   void disconnect() {
     _shouldAutoReconnect = false;
     _reconnectTimer?.cancel();
+    _stopHeartbeat();
+    _stopConnectionMonitor();
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
@@ -336,6 +487,8 @@ class SocketService {
   // Soft disconnect - keeps auto-reconnect enabled
   void softDisconnect() {
     _reconnectTimer?.cancel();
+    _stopHeartbeat();
+    _stopConnectionMonitor();
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;

@@ -4,7 +4,6 @@ import '../controllers/chat_controller.dart';
 import 'user_discovery_page.dart';
 import 'conversation_page.dart';
 import '../../settings/views/notification_settings_page.dart';
-import '../../../shared/widgets/connection_status_widget.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -13,16 +12,37 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadThreads();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Refresh threads when app becomes active
+      _loadThreads();
+    }
   }
 
   Future<void> _loadThreads() async {
     final chatController = context.read<ChatController>();
     await chatController.getThreads();
+  }
+
+  // Manual refresh method
+  Future<void> _refreshChat() async {
+    await _loadThreads();
   }
 
   Future<void> _navigateToUserDiscovery() async {
@@ -45,8 +65,11 @@ class _ChatPageState extends State<ChatPage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
-          const ConnectionStatusWidget(),
-          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshChat,
+            tooltip: 'Refresh conversations',
+          ),
           IconButton(
             icon: const Icon(Icons.notifications),
             onPressed: () {
@@ -62,7 +85,6 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
-          const ConnectionStatusBanner(),
           Expanded(
             child: Consumer<ChatController>(
               builder: (context, chatController, child) {
@@ -130,12 +152,15 @@ class _ChatPageState extends State<ChatPage> {
                   );
                 }
 
-                return ListView.builder(
-                  itemCount: chatController.threads.length,
-                  itemBuilder: (context, index) {
-                    final thread = chatController.threads[index];
-                    return _buildThreadTile(thread);
-                  },
+                return RefreshIndicator(
+                  onRefresh: _loadThreads,
+                  child: ListView.builder(
+                    itemCount: chatController.threads.length,
+                    itemBuilder: (context, index) {
+                      final thread = chatController.threads[index];
+                      return _buildThreadTile(thread);
+                    },
+                  ),
                 );
               },
             ),

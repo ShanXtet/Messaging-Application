@@ -174,6 +174,11 @@ class ApiService {
     return await get('${ApiConstants.conversations}/$conversationId');
   }
 
+  // Mark messages as read for a conversation
+  Future<Map<String, dynamic>> markMessagesAsRead(String conversationId) async {
+    return await post('${ApiConstants.conversations}/$conversationId/read', {});
+  }
+
 
   Future<Map<String, dynamic>> getConnectedUsers() async {
     return await get(ApiConstants.connectedUsers);

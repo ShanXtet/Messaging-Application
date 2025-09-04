@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+// import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:photo_view/photo_view.dart';
@@ -44,13 +44,20 @@ class _ConversationPageState extends State<ConversationPage> {
 
   Future<void> _initializeSocket() async {
     try {
-      await _socketService.connect();
+      debugPrint('[ConversationPage] Initializing socket for conversation: ${widget.conversationId}');
+      debugPrint('[ConversationPage] Socket connected before: ${_socketService.isConnected}');
+      
+      // Ensure socket is connected (don't reconnect if already connected)
+      await _socketService.ensureConnection();
+      
+      debugPrint('[ConversationPage] Socket connected after: ${_socketService.isConnected}');
+      
       _setupSocketListeners();
       // Join the conversation room for better message delivery
       _socketService.joinRoom(widget.conversationId);
-      debugPrint('Socket initialized successfully');
+      debugPrint('[ConversationPage] Socket initialized successfully and joined room');
     } catch (e) {
-      debugPrint('Socket connection failed: $e');
+      debugPrint('[ConversationPage] Socket connection failed: $e');
       _showErrorSnackBar('Failed to connect to real-time messaging. Retrying...');
       // Retry connection after 3 seconds
       Future.delayed(const Duration(seconds: 3), () {
@@ -129,9 +136,25 @@ class _ConversationPageState extends State<ConversationPage> {
       }
       
       if (isRelevantMessage) {
-        setState(() {
-          _messages.add(message);
-        });
+        // Check if this is a message we already have (sent by current user)
+        final isFromCurrentUser = message['from'] == widget.currentUserId;
+        final messageId = message['id'];
+        
+        if (isFromCurrentUser && messageId != null) {
+          // Update existing message with server data
+          final messageIndex = _messages.indexWhere((m) => m['id'] == messageId);
+          if (messageIndex != -1) {
+            setState(() {
+              _messages[messageIndex] = message;
+              _messages[messageIndex]['status'] = 'delivered';
+            });
+          }
+        } else {
+          // Add new message from other user
+          setState(() {
+            _messages.add(message);
+          });
+        }
         _scrollToBottom();
       }
     });
@@ -178,30 +201,73 @@ class _ConversationPageState extends State<ConversationPage> {
     _messageController.clear();
     _stopTyping();
 
-    // Check if socket is connected
+    // Ensure socket is connected
+    debugPrint('[ConversationPage] Sending message. Socket connected: ${_socketService.isConnected}');
     if (!_socketService.isConnected) {
-      _showErrorSnackBar('Not connected to server. Please try again.');
-      // Try to reconnect
       try {
-        await _initializeSocket();
+        debugPrint('[ConversationPage] Socket not connected, attempting to ensure connection...');
+        await _socketService.ensureConnection();
         if (!_socketService.isConnected) {
-          return;
+          debugPrint('[ConversationPage] Failed to ensure connection, resetting state...');
+          _socketService.resetConnectionState();
+          await _socketService.ensureConnection();
+          if (!_socketService.isConnected) {
+            debugPrint('[ConversationPage] Still failed after reset');
+            _showErrorSnackBar('Not connected to server. Please try again.');
+            return;
+          }
         }
+        debugPrint('[ConversationPage] Connection ensured successfully');
       } catch (e) {
-        _showErrorSnackBar('Failed to reconnect. Please try again.');
+        debugPrint('[ConversationPage] Error ensuring connection: $e');
+        _showErrorSnackBar('Failed to connect to server. Please try again.');
         return;
       }
     }
 
+    // Create message object for immediate UI update
+    final message = {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'text': text,
+      'from': widget.currentUserId,
+      'to': widget.peerId,
+      'conversationId': widget.conversationId,
+      'messageType': 'text',
+      'timestamp': DateTime.now().toIso8601String(),
+      'status': 'sending', // Mark as sending initially
+    };
+
+    // Add message to UI immediately for real-time feedback
+    setState(() {
+      _messages.add(message);
+    });
+    _scrollToBottom();
+
     try {
-      // Send message directly via socket service
+      // Send message via socket service
       await _socketService.sendMessage(
         toId: widget.peerId,
         text: text,
       );
+      
+      // Update message status to sent
+      setState(() {
+        final messageIndex = _messages.indexWhere((m) => m['id'] == message['id']);
+        if (messageIndex != -1) {
+          _messages[messageIndex]['status'] = 'sent';
+        }
+      });
     } catch (e) {
       debugPrint('Error sending message: $e');
       _showErrorSnackBar('Failed to send message: $e');
+      
+      // Update message status to failed
+      setState(() {
+        final messageIndex = _messages.indexWhere((m) => m['id'] == message['id']);
+        if (messageIndex != -1) {
+          _messages[messageIndex]['status'] = 'failed';
+        }
+      });
     }
   }
 
@@ -226,7 +292,7 @@ class _ConversationPageState extends State<ConversationPage> {
         } else {
           // Handle single file
           final file = File(result.files.first.path!);
-          final fileName = result.files.first.name;
+          // final fileName = result.files.first.name;
           final fileSize = file.lengthSync();
 
           // Check file size limit (10MB)
@@ -1618,147 +1684,147 @@ class _ConversationPageState extends State<ConversationPage> {
     );
   }
 
-  void _showMultiImageDialog(List<dynamic> images, int initialIndex) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Stack(
-          children: [
-            // Full screen image gallery
-            PageView.builder(
-              controller: PageController(initialPage: initialIndex),
-              itemCount: images.length,
-              itemBuilder: (context, index) {
-                final imageData = images[index];
-                final url = imageData['url'] ?? '';
-                final fullUrl = url.startsWith('http') ? url : '${ApiConstants.baseUrl}$url';
-                final fileName = imageData['fileName'] ?? 'Image ${index + 1}';
+  // void _showMultiImageDialog(List<dynamic> images, int initialIndex) {
+  //   showDialog(
+  //     context: context,
+  //     builder: (context) => Dialog(
+  //       backgroundColor: Colors.transparent,
+  //       child: Stack(
+  //         children: [
+  //           // Full screen image gallery
+  //           PageView.builder(
+  //             controller: PageController(initialPage: initialIndex),
+  //             itemCount: images.length,
+  //             itemBuilder: (context, index) {
+  //               final imageData = images[index];
+  //               final url = imageData['url'] ?? '';
+  //               final fullUrl = url.startsWith('http') ? url : '${ApiConstants.baseUrl}$url';
+  //               // final fileName = imageData['fileName'] ?? 'Image ${index + 1}';
                 
-                return Center(
-                  child: InteractiveViewer(
-                    panEnabled: true,
-                    boundaryMargin: const EdgeInsets.all(20),
-                    minScale: 0.5,
-                    maxScale: 4.0,
-                    child: Container(
-                      constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.9,
-                        maxHeight: MediaQuery.of(context).size.height * 0.8,
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          fullUrl,
-                          fit: BoxFit.contain,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Container(
-                              height: 300,
-                              color: Colors.black87,
-                              child: const Center(
-                                child: CircularProgressIndicator(
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                ),
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 300,
-                              color: Colors.black87,
-                              child: const Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.broken_image,
-                                      size: 64,
-                                      color: Colors.white,
-                                    ),
-                                    SizedBox(height: 16),
-                                    Text(
-                                      'Failed to load image',
-                                      style: TextStyle(color: Colors.white),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            // Close button
-            Positioned(
-              top: 40,
-              right: 20,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(
-                    Icons.close,
-                    color: Colors.white,
-                  ),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ),
-            // Image counter and info
-            Positioned(
-              bottom: 20,
-              left: 20,
-              right: 20,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.photo_library,
-                      color: Colors.white70,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${initialIndex + 1} of ${images.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.download,
-                        color: Colors.white70,
-                      ),
-                      onPressed: () {
-                        // TODO: Implement image download
-                        _showSuccessSnackBar('Download started');
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  //               return Center(
+  //                 child: InteractiveViewer(
+  //                   panEnabled: true,
+  //                   boundaryMargin: const EdgeInsets.all(20),
+  //                   minScale: 0.5,
+  //                   maxScale: 4.0,
+  //                   child: Container(
+  //                     constraints: BoxConstraints(
+  //                       maxWidth: MediaQuery.of(context).size.width * 0.9,
+  //                       maxHeight: MediaQuery.of(context).size.height * 0.8,
+  //                     ),
+  //                     child: ClipRRect(
+  //                       borderRadius: BorderRadius.circular(12),
+  //                       child: Image.network(
+  //                         fullUrl,
+  //                         fit: BoxFit.contain,
+  //                         loadingBuilder: (context, child, loadingProgress) {
+  //                           if (loadingProgress == null) return child;
+  //                           return Container(
+  //                             height: 300,
+  //                             color: Colors.black87,
+  //                             child: const Center(
+  //                               child: CircularProgressIndicator(
+  //                                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+  //                               ),
+  //                             ),
+  //                           );
+  //                         },
+  //                         errorBuilder: (context, error, stackTrace) {
+  //                           return Container(
+  //                             height: 300,
+  //                             color: Colors.black87,
+  //                             child: const Center(
+  //                               child: Column(
+  //                                 mainAxisAlignment: MainAxisAlignment.center,
+  //                                 children: [
+  //                                   Icon(
+  //                                     Icons.broken_image,
+  //                                     size: 64,
+  //                                     color: Colors.white,
+  //                                   ),
+  //                                   SizedBox(height: 16),
+  //                                   Text(
+  //                                     'Failed to load image',
+  //                                     style: TextStyle(color: Colors.white),
+  //                                   ),
+  //                                 ],
+  //                               ),
+  //                             ),
+  //                           );
+  //                         },
+  //                       ),
+  //                     ),
+  //                   ),
+  //                 ),
+  //               );
+  //             },
+  //           ),
+  //           // Close button
+  //           Positioned(
+  //             top: 40,
+  //             right: 20,
+  //             child: Container(
+  //               decoration: BoxDecoration(
+  //                 color: Colors.black.withOpacity(0.5),
+  //                 shape: BoxShape.circle,
+  //               ),
+  //               child: IconButton(
+  //                 icon: const Icon(
+  //                   Icons.close,
+  //                   color: Colors.white,
+  //                 ),
+  //                 onPressed: () => Navigator.of(context).pop(),
+  //               ),
+  //             ),
+  //           ),
+  //           // Image counter and info
+  //           Positioned(
+  //             bottom: 20,
+  //             left: 20,
+  //             right: 20,
+  //             child: Container(
+  //               padding: const EdgeInsets.all(12),
+  //               decoration: BoxDecoration(
+  //                 color: Colors.black.withOpacity(0.7),
+  //                 borderRadius: BorderRadius.circular(8),
+  //               ),
+  //               child: Row(
+  //                 children: [
+  //                   const Icon(
+  //                     Icons.photo_library,
+  //                     color: Colors.white70,
+  //                     size: 20,
+  //                   ),
+  //                   const SizedBox(width: 8),
+  //                   Expanded(
+  //                     child: Text(
+  //                       '${initialIndex + 1} of ${images.length}',
+  //                       style: const TextStyle(
+  //                         color: Colors.white,
+  //                         fontSize: 14,
+  //                         fontWeight: FontWeight.w500,
+  //                       ),
+  //                     ),
+  //                   ),
+  //                   IconButton(
+  //                     icon: const Icon(
+  //                       Icons.download,
+  //                       color: Colors.white70,
+  //                     ),
+  //                     onPressed: () {
+  //                       // TODO: Implement image download
+  //                       _showSuccessSnackBar('Download started');
+  //                     },
+  //                   ),
+  //                 ],
+  //               ),
+  //             ),
+  //           ),
+  //         ],
+  //       ),
+  //     ),
+  //   );
+  // }
 
   void _showPhotoViewDialog(String imageUrl, String fileName) {
     showDialog(
@@ -2040,6 +2106,10 @@ class _ConversationPageState extends State<ConversationPage> {
     Color color;
 
     switch (status) {
+      case 'sending':
+        icon = Icons.schedule;
+        color = Colors.orange;
+        break;
       case 'sent':
         icon = Icons.check;
         color = Colors.grey;
@@ -2051,6 +2121,10 @@ class _ConversationPageState extends State<ConversationPage> {
       case 'read':
         icon = Icons.done_all;
         color = Colors.blue;
+        break;
+      case 'failed':
+        icon = Icons.error;
+        color = Colors.red;
         break;
       default:
         icon = Icons.schedule;

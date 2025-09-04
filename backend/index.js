@@ -647,6 +647,11 @@ io.on('connection', (socket) => {
     console.error('[socket] connection error:', { userId, userEmail, error: error.message });
   });
 
+  // Handle ping/pong for heartbeat
+  socket.on('ping', (data) => {
+    socket.emit('pong', { timestamp: Date.now(), received: data?.timestamp });
+  });
+
   // Socket-only send → DB save + broadcast
   socket.on('message:send', async (payload, ack) => {
     try {
@@ -931,6 +936,22 @@ app.get('/api/conversations/:conversationId', auth, async (req, res) => {
     });
   } catch (e) {
     console.error('[conversation:get] error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Mark messages as read for a conversation
+app.post('/api/conversations/:conversationId/read', auth, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = new mongoose.Types.ObjectId(req.user.sub);
+    
+    // Reset unread count for this user in this conversation
+    await resetUnreadCount(conversationId, userId.toString());
+    
+    res.json({ message: 'Messages marked as read' });
+  } catch (e) {
+    console.error('[conversation:read] error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });

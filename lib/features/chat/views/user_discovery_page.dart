@@ -233,7 +233,7 @@ class _UserDiscoveryPageState extends State<UserDiscoveryPage> {
             const SizedBox(height: 16),
             Text(
               _searchQuery.isNotEmpty 
-                  ? 'No users found for "${_searchQuery}"'
+                  ? 'No users found for "$_searchQuery"'
                   : 'No users available',
               style: TextStyle(
                 fontSize: 18,
