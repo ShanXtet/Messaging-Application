@@ -1,6 +1,6 @@
 # projectmessage
 
-A new Flutter project.
+This is Android Instant Messaging Application.
 
 ## Getting Started
 
