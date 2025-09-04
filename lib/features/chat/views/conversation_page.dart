@@ -137,7 +137,7 @@ class _ConversationPageState extends State<ConversationPage> {
       
       if (isRelevantMessage) {
         // Check if this is a message we already have (sent by current user)
-        final isFromCurrentUser = message['from'] == widget.currentUserId;
+        final isFromCurrentUser = message['from'] == context.read<ChatController>().currentUserId;
         final messageId = message['id'];
         
         if (isFromCurrentUser && messageId != null) {
@@ -229,7 +229,7 @@ class _ConversationPageState extends State<ConversationPage> {
     final message = {
       'id': DateTime.now().millisecondsSinceEpoch.toString(),
       'text': text,
-      'from': widget.currentUserId,
+      'from': context.read<ChatController>().currentUserId,
       'to': widget.peerId,
       'conversationId': widget.conversationId,
       'messageType': 'text',
